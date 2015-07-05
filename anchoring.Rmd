@@ -1,0 +1,107 @@
+---
+title: "Anchoring and Adjustment in Social Judgments"
+date: "July 4, 2015"
+output:
+  html_document:
+    highlight: tango
+    theme: spacelab
+---
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(message=FALSE, warning=FALSE, cache=TRUE)
+```
+
+Load libraries
+```{r libraries, cache = FALSE}
+library(ggplot2)
+library(dplyr)
+library(langcog)
+library(readr)
+library(cowplot)
+library(data.table)
+library(magrittr)
+library(lubridate)
+library(tidyr)
+source('~/Projects/langcog/R/multiboot.R')
+
+na.mean <- function(x){mean(x,na.rm=T)}
+```
+
+```{r load_data}
+pilot.data <- fread('pilot.data.csv') %>%
+  select(EndDate,Finished,ID,game_neg:game_pos,
+         Self_1:Self_6,liberal,repub,other_1:socialclas,race) %>%
+  rename(self_movies = Self_1, self_run = Self_2, self_pjs = Self_3,
+         self_music = Self_4, self_train = Self_5, self_games = Self_6,
+         other_movies = other_1, other_run = other_2, other_pjs = other_3,
+         other_music = other_4, other_train = other_5, other_games = other_6) %>%
+  rename(similar1 = `sim-1`,similar2 = `sim-2`, like1 = `like-1`, 
+         like2 =`like-2`, poli1 = `poli-1`, poli2 = `poli-2`)
+
+#Exclusions
+pilot.data %<>%
+  mutate(EndDate = mdy_hm(EndDate)) %>%
+  arrange(ID,EndDate) %>%
+  distinct(ID) %>% #only the first response from each participant
+  filter(Finished == 1) #only complete data
+```
+
+Get data into tidy form
+```{r munging}
+munged.data <- pilot.data %>%
+  mutate(other_orientation = factor(ifelse(is.na(liberal), "Conservative", "Liberal")),
+         other_check = factor(Mcheck, levels = c(-1,1), 
+                              labels = c("Conservative","Liberal"))) %>%
+  select(-liberal,-repub,-Mcheck) %>%
+  mutate(movies_prime = factor(ifelse(nchar(Movie_pos) > 0, "Negative", "Positive")),
+         run_prime = factor(ifelse(nchar(Run_Pos) > 0, "Negative", "Positive")),
+         pjs_prime = factor(ifelse(nchar(PJ_pos) > 0, "Negative", "Positive")),
+         music_prime = factor(ifelse(nchar(music_pos) > 0, "Negative", "Positive")),
+         train_prime = factor(ifelse(nchar(train_pos) > 0, "Negative", "Positive")),
+         games_prime = factor(ifelse(nchar(game_pos) > 0, "Negative", "Positive"))) %>%
+  select(ID,self_movies:poli2,other_orientation:games_prime)
+
+tidy.primes <- munged.data %>%
+  gather(activity,prime,movies_prime:games_prime) %>%
+  separate(activity, c("activity", "measure")) %>%
+  select(ID,activity,prime,similar1:other_check)
+
+tidy.self <- munged.data %>%
+  gather(person_activity,score,self_movies:self_games) %>%
+  separate(person_activity, c("person", "activity")) %>%
+  select(ID,person,activity,score,similar1:other_check)
+
+tidy.other <- munged.data %>%
+  gather(person_activity,score,other_movies:other_games) %>%
+  separate(person_activity, c("person", "activity")) %>%
+  select(ID,person,activity,score,similar1:other_check)
+
+
+tidy.self.data <- left_join(tidy.primes,tidy.self)
+tidy.other.data <- left_join(tidy.primes,tidy.other)
+tidy.data <- bind_rows(tidy.self.data,tidy.other.data) %>%
+  mutate(person = factor(person, levels = c("self", "other")))
+
+```
+
+Aggregate scores by activity and prime
+```{r prime_check}
+aggregate.data <- tidy.data %>%
+  group_by(person,prime,activity)  %>%
+  summarise(mean = na.mean(score)) %>%
+  left_join(multi_boot(tidy.data,column="score", summary_function = "na.mean",
+                     summary_groups = c("person","prime", "activity"),
+                     statistics_functions = c("ci_lower","ci_upper")), 
+            copy = TRUE)  
+```
+
+
+```{r plots,fig.width=5,fig.height=6}
+ggplot(aes(x = activity, y = mean, color = prime), data = aggregate.data) +
+  facet_grid(person ~ .) +
+  geom_pointrange(aes(ymin = ci_lower, ymax = ci_upper),
+                  position=position_dodge(.3),size=.75) +
+  scale_color_manual(values = c("steelblue", "darkred")) +
+  theme(legend.position = c(.2,.6)) + 
+  scale_y_continuous(name = "Mean Rating (1-7)")
+```
