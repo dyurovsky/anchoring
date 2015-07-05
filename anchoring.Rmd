@@ -47,18 +47,31 @@ pilot.data %<>%
 ```
 
 Get data into tidy form
-```{r munging}
+```{r munging,cache=FALSE}
 munged.data <- pilot.data %>%
   mutate(other_orientation = factor(ifelse(is.na(liberal), "Conservative", "Liberal")),
          other_check = factor(Mcheck, levels = c(-1,1), 
                               labels = c("Conservative","Liberal"))) %>%
   select(-liberal,-repub,-Mcheck) %>%
-  mutate(movies_prime = factor(ifelse(nchar(Movie_pos) > 0, "Negative", "Positive")),
-         run_prime = factor(ifelse(nchar(Run_Pos) > 0, "Negative", "Positive")),
-         pjs_prime = factor(ifelse(nchar(PJ_pos) > 0, "Negative", "Positive")),
-         music_prime = factor(ifelse(nchar(music_pos) > 0, "Negative", "Positive")),
-         train_prime = factor(ifelse(nchar(train_pos) > 0, "Negative", "Positive")),
-         games_prime = factor(ifelse(nchar(game_pos) > 0, "Negative", "Positive"))) %>%
+  rowwise() %>%
+  mutate(movies_prime = if(nchar(Movie_neg) > 0 & nchar(Movie_pos) == 0) "Negative"
+         else if(nchar(Movie_pos) > 0 & nchar(Movie_neg) == 0) "Positive"
+         else as.character(NA),
+         run_prime = if(nchar(Run_neg) > 0 & nchar(Run_Pos) == 0) "Negative"
+         else if(nchar(Run_Pos) > 0 & nchar(Run_neg) == 0) "Positive"
+         else as.character(NA),
+         pjs_prime = if(nchar(PJ_neg) > 0 & nchar(PJ_pos) == 0) "Negative"
+         else if(nchar(PJ_pos) > 0 & nchar(PJ_neg) == 0) "Positive"
+         else as.character(NA),
+         music_prime = if(nchar(music_neg) > 0 & nchar(music_pos) == 0) "Negative"
+         else if(nchar(music_pos) > 0 & nchar(music_neg) == 0) "Positive"
+         else as.character(NA),
+         train_prime = if(nchar(train_neg) > 0 & nchar(train_pos) == 0) "Negative"
+         else if(nchar(train_pos) > 0 & nchar(train_neg) == 0) "Positive"
+         else as.character(NA),
+         games_prime = if(nchar(game_neg) > 0 & nchar(game_pos) == 0) "Negative"
+         else if(nchar(game_pos) > 0 & nchar(game_neg) == 0) "Positive"
+         else as.character(NA))%>%
   select(ID,self_movies:poli2,other_orientation:games_prime)
 
 tidy.primes <- munged.data %>%
@@ -80,12 +93,13 @@ tidy.other <- munged.data %>%
 tidy.self.data <- left_join(tidy.primes,tidy.self)
 tidy.other.data <- left_join(tidy.primes,tidy.other)
 tidy.data <- bind_rows(tidy.self.data,tidy.other.data) %>%
-  mutate(person = factor(person, levels = c("self", "other")))
+  mutate(person = factor(person, levels = c("self", "other"))) %>%
+  filter(!is.na(prime))
 
 ```
 
 Aggregate scores by activity and prime
-```{r prime_check}
+```{r prime_check, cache=FALSE}
 aggregate.data <- tidy.data %>%
   group_by(person,prime,activity)  %>%
   summarise(mean = na.mean(score)) %>%
@@ -96,7 +110,7 @@ aggregate.data <- tidy.data %>%
 ```
 
 
-```{r plots,fig.width=5,fig.height=6}
+```{r plots,fig.width=5,fig.height=6,cache=FALSE}
 ggplot(aes(x = activity, y = mean, color = prime), data = aggregate.data) +
   facet_grid(person ~ .) +
   geom_pointrange(aes(ymin = ci_lower, ymax = ci_upper),
