@@ -1,0 +1,156 @@
+---
+title: "Anchoring and Adjustment in Social Judgments"
+date: "July 28, 2015"
+output:
+  html_document:
+    highlight: tango
+    theme: spacelab
+---
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(message=FALSE, warning=FALSE, cache=TRUE)
+```
+
+Load libraries
+```{r libraries, cache = FALSE}
+library(ggplot2)
+library(dplyr)
+library(langcog)
+library(readr)
+library(cowplot)
+library(data.table)
+library(magrittr)
+library(lubridate)
+library(tidyr)
+
+na.mean <- function(x){mean(x,na.rm=T)}
+```
+
+```{r load_data}
+pilot.data <- read_csv('data/pilot.data.3.csv') %>%
+  select(EndDate,Finished,ResponseID,game_neg:game_pos,
+         self_movie:self_game,other_movie:other_game,
+         sim1:like2,diff_cond:sim_cond)
+
+#Exclusions
+pilot.data %<>%
+  mutate(EndDate = mdy_hm(EndDate)) %>%
+  arrange(ResponseID,EndDate) %>%
+  distinct(ResponseID) #only the first response from each participant
+```
+
+Get data into tidy form
+```{r munging,cache=FALSE}
+munged.data <- pilot.data %>%
+  mutate(cond = ifelse(is.na(sim_cond),"Different", "Similar")) %>%
+  rowwise() %>%
+  mutate(sim = mean(c(sim1, sim2),na.rm=TRUE),
+         like = mean(c(sim1, sim2),na.rm=TRUE),
+         movie_prime = if(nchar(movie_neg) > 0 & nchar(movie_pos) == 0) "Negative"
+         else if(nchar(movie_pos) > 0 & nchar(movie_neg) == 0) "Positive"
+         else "None",
+         family_prime = if(nchar(family_neg) > 0 & nchar(family_pos) == 0) "Negative"
+         else if(nchar(family_pos) > 0 & nchar(family_neg) == 0) "Positive"
+         else "None",
+         pjs_prime = if(nchar(pjs_neg) > 0 & nchar(pjs_pos) == 0) "Negative"
+         else if(nchar(pjs_pos) > 0 & nchar(pjs_neg) == 0) "Positive"
+         else "None",
+         hair_prime = if(nchar(hair_neg) > 0 & nchar(hair_pos) == 0) "Negative"
+         else if(nchar(hair_pos) > 0 & nchar(hair_neg) == 0) "Positive"
+         else "None",
+         train_prime = if(nchar(train_neg) > 0 & nchar(train_pos) == 0) "Negative"
+         else if(nchar(train_pos) > 0 & nchar(train_neg) == 0) "Positive"
+         else "None",
+         game_prime = if(nchar(game_neg) > 0 & nchar(game_pos) == 0) "Negative"
+         else if(nchar(game_pos) > 0 & nchar(game_neg) == 0) "Positive"
+         else "None") %>%
+  select(ResponseID,movie_prime:game_prime,self_movie:other_game,sim,like,cond)
+
+# Gather primes into long format
+tidy.primes <- munged.data %>%
+  gather(activity,prime,movie_prime:game_prime) %>%
+  separate(activity, c("activity", "measure")) %>%
+  select(ResponseID,activity,prime,sim:cond)
+
+# Gather self-ratings into long format
+tidy.self <- munged.data %>%
+  gather(person_activity,score,self_movie:self_game) %>%
+  separate(person_activity, c("person", "activity")) %>%
+  select(ResponseID,person,activity,score,sim:cond)
+
+# Gather other-ratings into long format
+tidy.other <- munged.data %>%
+  gather(person_activity,score,other_movie:other_game) %>%
+  separate(person_activity, c("person", "activity")) %>%
+  select(ResponseID,person,activity,score,sim:cond)
+
+tidy.self.data <- left_join(tidy.primes,tidy.self)
+
+# Split other into similar and non-similar
+tidy.other.data <- left_join(tidy.primes,tidy.other) %>%
+  rowwise() %>%
+  mutate(similarity = if(sim >= 4) "similar"
+         else if(sim <= 2) "different"
+         else "neither") 
+```
+
+Similarity scores across participants
+```{r sim_plot, fig.width = 5, fig.height = 4 }
+ggplot(aes(x = sim),data=tidy.other.data) +
+  geom_histogram(breaks = seq(.5,6.5,by=1),
+                 color="white",fill="steelblue") +
+  scale_x_continuous(name = "Similarity Rating (1-5)",
+                     breaks = seq(1,5),
+                     limits = c(0,6)) +
+  scale_y_continuous(name = "Frequency")
+```
+
+Finish munging
+```{r finish_munging, cache = FALSE}
+tidy.other.data %<>%
+  filter(similarity %in% c("similar", "different")) %>%
+  unite(person.similar,person,similarity) %>%
+  rename(person = person.similar)
+
+tidy.data <- bind_rows(tidy.self.data,tidy.other.data) %>%
+  mutate(person = factor(person, levels = c("self", "other_similar", "other_different"),
+                         labels = c("self", "other-similar", "other-different")),
+         prime = factor(prime, levels = c("Negative", "None", "Positive"))) %>% 
+  group_by(person,prime,activity)
+```
+
+Aggregate scores by activity and prime
+```{r prime_check, cache=FALSE}
+person.activity.data <- tidy.data %>%
+  summarise(mean = na.mean(score)) %>%
+  left_join(multi_boot(tidy.data,column="score", summary_function = "na.mean",
+                     statistics_functions = c("ci_lower","ci_upper")), 
+            copy = TRUE)
+```
+
+
+```{r plot_activity,fig.width=7,fig.height=6,cache=FALSE}
+ggplot(aes(x = activity, y = mean, color = prime), data = person.activity.data) +
+  facet_grid(person ~ .) +
+  geom_pointrange(aes(ymin = ci_lower, ymax = ci_upper),
+                  position=position_dodge(.3),size=.75) +
+  scale_color_manual(values = c("steelblue", "gray", "darkred")) +
+  scale_y_continuous(name = "Mean Rating (1-7)")
+```
+
+Aggregate scores by prime
+```{r person_check, cache=FALSE}
+person.data <- person.activity.data %>%
+  summarise(mean = mean(mean)) %>%
+  left_join(multi_boot(person.activity.data,column="mean",
+                     statistics_functions = c("ci_lower","ci_upper")), 
+            copy = TRUE)  
+```
+
+```{r plot_person,fig.width=6,fig.height=3.5,cache=FALSE}
+ggplot(aes(x = person, y = mean, color = prime), data = person.data) +
+  geom_pointrange(aes(ymin = ci_lower, ymax = ci_upper),
+                  position=position_dodge(.3),size=.75) +
+  scale_color_manual(values = c("steelblue", "gray", "darkred")) +
+  scale_y_continuous(name = "Mean Rating (1-7)")
+```
